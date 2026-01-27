@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Player Login - Dota 2 Auction</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="setup-container">
+    <div class="setup-card">
+      <div class="setup-header">
+        <h1>🎮 Dota 2 Auction Tracker</h1>
+        <p class="subtitle">Welcome! Please sign in with your Steam ID</p>
+      </div>
+
+      <div class="setup-content">
+        <div class="player-login-form">
+          <div class="form-group">
+            <label for="steamIdInput">Steam ID (64-bit)</label>
+            <input 
+              type="text" 
+              id="steamIdInput" 
+              placeholder="76561198..." 
+              autocomplete="off"
+              autofocus
+            >
+            <span class="input-hint">Enter your 17-digit Steam ID</span>
+          </div>
+
+          <div id="loginError" class="error-message" style="display: none;"></div>
+
+          <button class="btn-primary btn-block btn-large" id="loginBtn">
+            <span class="btn-icon">🚀</span>
+            Sign In
+          </button>
+
+          <div class="help-section">
+            <p class="text-muted">Don't know your Steam ID?</p>
+            <button class="btn-text" id="findSteamIdBtn">Find Your Steam ID</button>
+          </div>
+        </div>
+
+        <div id="loadingPlayer" class="loading-state" style="display: none;">
+          <div class="spinner-large"></div>
+          <p>Fetching your Steam profile...</p>
+        </div>
+
+        <div id="playerPreview" class="player-preview" style="display: none;">
+          <div class="player-preview-card">
+            <img id="playerAvatar" class="player-avatar" src="" alt="Player Avatar">
+            <div class="player-details">
+              <h3 id="playerUsername">Username</h3>
+              <p class="player-steamid" id="playerSteamId"></p>
+            </div>
+          </div>
+          <button class="btn-primary btn-block" id="confirmLoginBtn">
+            <span class="btn-icon">✓</span>
+            Continue as this player
+          </button>
+          <button class="btn-secondary btn-block" id="backBtn">
+            <span class="btn-icon">←</span>
+            Try Different Steam ID
+          </button>
+        </div>
+      </div>
+
+      <div class="setup-footer">
+        <p class="text-muted small">
+          Your Steam ID is used to track your matches and statistics
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/player-login.js"></script>
+</body>
+</html>

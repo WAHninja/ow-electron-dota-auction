@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';">
+  <title>Dota 2 Auction Tracker</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="auction-dashboard">
+    <!-- Top Navigation -->
+    <nav class="top-nav">
+      <div class="nav-brand">
+        <h1>🎮 Dota 2 Auction</h1>
+      </div>
+      <div class="nav-controls">
+        <button class="btn-nav" id="openJitsiBtn">
+          <span class="icon">🎙️</span>
+          Voice Chat
+        </button>
+        <button class="btn-nav" id="viewHistoryBtn">
+          <span class="icon">📊</span>
+          History
+        </button>
+        <button class="btn-nav" id="settingsBtn">
+          <span class="icon">⚙️</span>
+          Settings
+        </button>
+      </div>
+    </nav>
+
+    <!-- Main Content Area -->
+    <div class="main-content">
+      <!-- Sidebar: Match Control -->
+      <aside class="sidebar">
+        <div class="sidebar-section">
+          <h2>Match Control</h2>
+          
+          <!-- No Active Match -->
+          <div id="noMatchPanel" class="control-panel">
+            <p class="text-muted">No active match</p>
+            <button class="btn-primary btn-block" id="createMatchBtn">
+              <span class="icon">➕</span>
+              Create New Match
+            </button>
+          </div>
+
+          <!-- Active Match Info -->
+          <div id="matchInfoPanel" class="control-panel" style="display: none;">
+            <div class="match-header">
+              <h3 id="matchName">Tournament Match</h3>
+              <span class="badge badge-success">Active</span>
+            </div>
+            
+            <div class="match-stats">
+              <div class="stat-item">
+                <span class="stat-label">Round</span>
+                <span class="stat-value" id="currentRound">0</span>
+              </div>
+              <div class="stat-item">
+                <span class="stat-label">Phase</span>
+                <span class="stat-value" id="gamePhase">-</span>
+              </div>
+            </div>
+
+            <div class="button-group-vertical">
+              <button class="btn-secondary btn-block" id="endRoundBtn">
+                <span class="icon">🏁</span>
+                End Round
+              </button>
+              <button class="btn-danger btn-block" id="endMatchBtn">
+                <span class="icon">⏹️</span>
+                End Match
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Teams Overview -->
+        <div class="sidebar-section">
+          <h2>Teams</h2>
+          <div id="teamsOverview">
+            <div class="team-summary">
+              <div class="team-header team1">
+                <h4>Team 1</h4>
+                <span class="team-count" id="team1Count">0</span>
+              </div>
+              <div id="team1Players" class="player-chips"></div>
+            </div>
+            
+            <div class="team-summary">
+              <div class="team-header teamA">
+                <h4>Team A</h4>
+                <span class="team-count" id="teamACount">0</span>
+              </div>
+              <div id="teamAPlayers" class="player-chips"></div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- Main Dashboard Area -->
+      <main class="dashboard-main">
+        <!-- Current State Display -->
+        <section class="dashboard-section">
+          <div class="section-header">
+            <h2>Current State</h2>
+            <button class="btn-icon" id="refreshBtn" title="Refresh">
+              <span>🔄</span>
+            </button>
+          </div>
+
+          <!-- Game State Cards -->
+          <div class="state-grid">
+            <!-- GSI Status -->
+            <div class="state-card">
+              <div class="card-icon">📡</div>
+              <div class="card-content">
+                <h3>GSI Status</h3>
+                <p id="gsiStatus" class="status-text">Waiting...</p>
+                <span id="lastGsiUpdate" class="text-muted small">Never</span>
+              </div>
+            </div>
+
+            <!-- Voice Chat Status -->
+            <div class="state-card">
+              <div class="card-icon">🎙️</div>
+              <div class="card-content">
+                <h3>Voice Chat</h3>
+                <p id="voiceStatus" class="status-text">Main Room Active</p>
+                <button class="btn-text btn-sm" id="joinVoiceBtn">Join Now</button>
+              </div>
+            </div>
+
+            <!-- Players Online -->
+            <div class="state-card">
+              <div class="card-icon">👥</div>
+              <div class="card-content">
+                <h3>Players</h3>
+                <p id="playersOnline" class="status-text">0 / 0</p>
+                <span class="text-muted small">In match</span>
+              </div>
+            </div>
+
+            <!-- Current Game -->
+            <div class="state-card">
+              <div class="card-icon">🎮</div>
+              <div class="card-content">
+                <h3>Dota 2 Game</h3>
+                <p id="dotaGameStatus" class="status-text">Not Detected</p>
+                <span id="dotaMatchId" class="text-muted small">-</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Dynamic Content Area -->
+        <section class="dashboard-section">
+          <div class="section-header">
+            <h2 id="contentTitle">Welcome</h2>
+          </div>
+
+          <!-- Welcome Screen -->
+          <div id="welcomeContent" class="content-panel">
+            <div class="welcome-hero">
+              <h2>Welcome to Dota 2 Auction Tracker</h2>
+              <p>Create a match to get started, or view your match history</p>
+              <div class="quick-actions">
+                <button class="btn-primary btn-large" id="quickCreateMatch">
+                  <span class="icon">🎯</span>
+                  Create Match
+                </button>
+                <button class="btn-secondary btn-large" id="quickViewHistory">
+                  <span class="icon">📚</span>
+                  View History
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Player Roster (during match) -->
+          <div id="rosterContent" class="content-panel" style="display: none;">
+            <div class="roster-grid" id="rosterGrid"></div>
+          </div>
+
+          <!-- Auction Phase Content -->
+          <div id="auctionContent" class="content-panel" style="display: none;">
+            <!-- This will be populated dynamically -->
+          </div>
+
+          <!-- Round Results -->
+          <div id="resultsContent" class="content-panel" style="display: none;">
+            <!-- This will be populated dynamically -->
+          </div>
+        </section>
+
+        <!-- Activity Log -->
+        <section class="dashboard-section">
+          <div class="section-header">
+            <h2>Activity Log</h2>
+            <button class="btn-text btn-sm" id="clearLogBtn">Clear</button>
+          </div>
+          <div class="activity-log" id="activityLog">
+            <div class="log-item">
+              <span class="log-time">--:--</span>
+              <span class="log-message">Waiting for activity...</span>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <!-- Modals -->
+  
+  <!-- Create Match Modal -->
+  <div class="modal" id="createMatchModal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h2>Create New Match</h2>
+        <button class="modal-close" id="closeCreateMatch">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="matchNameInput">Match Name</label>
+          <input type="text" id="matchNameInput" placeholder="e.g., Tournament Finals - Round 1">
+        </div>
+
+        <div class="form-group">
+          <label>Select Players</label>
+          <div id="playersList" class="players-selection-list">
+            <!-- Will be populated dynamically -->
+          </div>
+        </div>
+
+        <div class="modal-info">
+          <strong>Note:</strong> Players will be randomly assigned to teams, or you can manually assign them.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="cancelCreateMatch">Cancel</button>
+        <button class="btn-primary" id="confirmCreateMatch">
+          <span class="icon">🚀</span>
+          Start Match
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- End Round Modal -->
+  <div class="modal" id="endRoundModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>End Round</h2>
+        <button class="modal-close" id="closeEndRound">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>Winning Team</label>
+          <div class="team-select">
+            <button class="team-select-btn" id="selectTeam1" data-team="team1">
+              <span class="team-icon">🔵</span>
+              Team 1
+            </button>
+            <button class="team-select-btn" id="selectTeamA" data-team="teamA">
+              <span class="team-icon">🔴</span>
+              Team A
+            </button>
+          </div>
+        </div>
+
+        <div class="modal-info">
+          GSI data will be used to calculate player stats automatically.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="cancelEndRound">Cancel</button>
+        <button class="btn-primary" id="confirmEndRound" disabled>
+          <span class="icon">✓</span>
+          End Round
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Resume Match Modal -->
+  <div class="modal" id="resumeMatchModal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h2>Resume Match</h2>
+        <button class="modal-close" id="closeResumeMatch">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="resumableMatchesList" class="resumable-matches-list"></div>
+
+        <div id="noMatchesFound" class="no-matches-found" style="display:none;">
+          <span class="empty-icon">📋</span>
+          <h3>No Active Matches Found</h3>
+          <p>You don't have any matches in progress.</p>
+          <button class="btn-primary" id="createNewMatchFromEmpty">
+            ➕ Create New Match
+          </button>
+        </div>
+
+        <div id="loadingMatches">
+          <p>Loading your matches...</p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="cancelResumeMatch">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Match Details Preview Modal -->
+  <div class="modal" id="matchDetailsModal">
+    <div class="modal-content modal-large">
+      <div class="modal-header">
+        <h2>Match Details</h2>
+        <button class="modal-close" id="closeMatchDetails">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div id="matchDetailsContent" class="match-details-content"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="backToMatchList">Back</button>
+        <button class="btn-danger" id="abandonMatchBtn">Abandon Match</button>
+        <button class="btn-primary" id="confirmResumeMatch">▶ Resume Match</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/auction.js"></script>
+</body>
+</html>

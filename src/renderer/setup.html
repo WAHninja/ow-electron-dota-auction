@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Setup - Dota 2 Auction Tracker</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div class="setup-container">
+    <div class="setup-card">
+      <div class="setup-header">
+        <h1>🎮 Dota 2 Auction Tracker</h1>
+        <p class="subtitle">Welcome! Let's get you set up</p>
+      </div>
+
+      <div class="setup-content">
+        <!-- Step Indicator -->
+        <div class="steps">
+          <div class="step active" id="step1">
+            <div class="step-number">1</div>
+            <div class="step-label">Supabase Setup</div>
+          </div>
+          <div class="step" id="step2">
+            <div class="step-number">2</div>
+            <div class="step-label">Jitsi Configuration</div>
+          </div>
+          <div class="step" id="step3">
+            <div class="step-number">3</div>
+            <div class="step-label">Ready to Go!</div>
+          </div>
+        </div>
+
+        <!-- Step 1: Supabase Configuration -->
+        <div class="setup-step" id="supabaseStep">
+          <h2>Database Configuration</h2>
+          <p class="step-description">
+            We use Supabase to store match data, player stats, and auction history.
+          </p>
+
+          <div class="info-box">
+            <strong>Don't have Supabase?</strong>
+            <ol>
+              <li>Go to <a href="#" id="supabaseLink">supabase.com</a></li>
+              <li>Create a free account and new project</li>
+              <li>Run the SQL schema (see documentation)</li>
+              <li>Get your credentials from Settings → API</li>
+            </ol>
+          </div>
+
+          <div class="warning-box">
+            <strong>⚠️ Important: Use SERVICE ROLE Key</strong><br>
+            This app requires the <strong>service_role</strong> key (not the anon key) to bypass Row Level Security.
+            Find it in: Settings → API → Project API keys → service_role (secret)
+          </div>
+
+          <div class="form-group">
+            <label for="supabaseUrl">Supabase Project URL</label>
+            <input 
+              type="text" 
+              id="supabaseUrl" 
+              placeholder="https://your-project.supabase.co"
+              autocomplete="off"
+            >
+            <span class="input-hint">Found in Settings → API → Project URL</span>
+          </div>
+
+          <div class="form-group">
+            <label for="supabaseKey">Supabase SERVICE ROLE Key</label>
+            <input 
+              type="password" 
+              id="supabaseKey" 
+              placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+              autocomplete="off"
+            >
+            <span class="input-hint">⚠️ Use service_role key (NOT anon key) from Settings → API → service_role</span>
+            <button type="button" class="btn-text" id="toggleKey">Show</button>
+          </div>
+
+          <div id="supabaseError" class="error-message" style="display: none;"></div>
+
+          <button class="btn-primary" id="connectSupabase">
+            <span class="btn-icon">🔌</span>
+            Connect to Supabase
+          </button>
+        </div>
+
+        <!-- Step 2: Jitsi Configuration (Optional) -->
+        <div class="setup-step" id="jitsiStep" style="display: none;">
+          <h2>Voice Chat Configuration</h2>
+          <p class="step-description">
+            Configure Jitsi Meet for in-game voice chat. Using the default public server is fine for most cases.
+          </p>
+
+          <div class="info-box">
+            <strong>Default:</strong> Uses meet.jit.si (public server)<br>
+            <strong>Advanced:</strong> Use your own Jitsi server for better privacy and performance
+          </div>
+
+          <div class="form-group">
+            <label for="jitsiDomain">Jitsi Server Domain</label>
+            <input 
+              type="text" 
+              id="jitsiDomain" 
+              placeholder="meet.jit.si"
+              value="meet.jit.si"
+            >
+            <span class="input-hint">Leave as default or enter your custom Jitsi server domain</span>
+          </div>
+
+          <div class="button-group">
+            <button class="btn-secondary" id="skipJitsi">Use Default</button>
+            <button class="btn-primary" id="saveJitsi">Save Configuration</button>
+          </div>
+        </div>
+
+        <!-- Step 3: Success -->
+        <div class="setup-step" id="successStep" style="display: none;">
+          <div class="success-animation">
+            <div class="success-checkmark">✓</div>
+          </div>
+          <h2>All Set!</h2>
+          <p class="step-description">
+            Your Dota 2 Auction Tracker is ready to use. You can now create matches, track rounds, and manage auctions.
+          </p>
+
+          <div class="feature-list">
+            <div class="feature-item">
+              <span class="feature-icon">✓</span>
+              <span>Database connected</span>
+            </div>
+            <div class="feature-item">
+              <span class="feature-icon">✓</span>
+              <span>Voice chat configured</span>
+            </div>
+            <div class="feature-item">
+              <span class="feature-icon">✓</span>
+              <span>GSI server ready</span>
+            </div>
+          </div>
+
+          <button class="btn-primary btn-large" id="startApp">
+            <span class="btn-icon">🚀</span>
+            Start Using the App
+          </button>
+        </div>
+      </div>
+
+      <div class="setup-footer">
+        <a href="#" id="docsLink">📚 Documentation</a>
+        <span class="separator">•</span>
+        <a href="#" id="helpLink">❓ Need Help?</a>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/setup.js"></script>
+</body>
+</html>
