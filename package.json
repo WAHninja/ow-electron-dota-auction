@@ -1,0 +1,22 @@
+{
+  "name": "dota2-auction-app",
+  "version": "1.0.0",
+  "description": "Dota 2 Auction game tracker with GSI integration",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0",
+    "axios": "^1.13.3",
+    "body-parser": "^1.20.2",
+    "dotenv": "^16.6.1",
+    "electron-store": "^8.1.0",
+    "express": "^4.18.2",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "electron": "^28.0.0"
+  }
+}
