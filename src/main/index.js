@@ -1,22 +1,25 @@
 require('dotenv').config();
-const SteamService = require('./steam-service');
-
-// Initialize Steam service
-const steamService = new SteamService(process.env.STEAM_API_KEY);const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const Store = require('electron-store');
 const GSIServer = require('./gsi-server');
 const AuctionManager = require('./auction-manager');
 const JitsiManager = require('./jitsi-manager');
+const RoundTracker = require('./round-tracker');
+const SteamService = require('./steam-service');
 const supabase = require('./supabase-client');
 const MatchRecovery = require('./match-recovery');
 
+// Initialize services
+const steamService = new SteamService(process.env.STEAM_API_KEY);
 const store = new Store();
+
 let mainWindow = null;
 let overlayWindow = null;
 let gsiServer = null;
 let auctionManager = null;
 let jitsiManager = null;
+let roundTracker = null;
 let matchRecovery = null;
 
 function ensureSupabaseInitialized() {
@@ -80,8 +83,11 @@ function initializeApp() {
   // Initialize Auction Manager
   auctionManager = new AuctionManager();
 
-  // ✅ Initialize Match Recovery
+  // Initialize Match Recovery
   matchRecovery = new MatchRecovery(supabase);
+
+  // Initialize Round Tracker
+  roundTracker = new RoundTracker();
 
   // Initialize Jitsi Manager and create main room immediately
   jitsiManager = new JitsiManager();
@@ -92,6 +98,12 @@ function initializeApp() {
 
   // GSI event handlers
   gsiServer.on('game-state', (data) => {
+    // Send to round tracker for automatic round detection
+    if (roundTracker && auctionManager.currentMatch) {
+      roundTracker.processGSIData(data);
+    }
+
+    // Send to renderer windows
     if (mainWindow) {
       mainWindow.webContents.send('game-state-update', data);
     }
@@ -101,10 +113,60 @@ function initializeApp() {
     }
   });
 
+  // Round Tracker event handlers
+  roundTracker.on('round-started', (data) => {
+    console.log('[App] Round started:', data.roundNumber);
+    if (mainWindow) {
+      mainWindow.webContents.send('round-started', data);
+    }
+  });
+
+  roundTracker.on('round-ended', async (data) => {
+    console.log('[App] Round ended. Winner:', data.winningTeam);
+    
+    try {
+      // Automatically end the round in auction manager
+      await auctionManager.endRound(
+        data.dotaMatchId,
+        data.customGameName,
+        data.winningTeam,
+        data.playerStats
+      );
+      
+      console.log('[App] Round saved to database');
+    } catch (error) {
+      console.error('[App] Error ending round:', error);
+      // Send error to renderer
+      if (mainWindow) {
+        mainWindow.webContents.send('round-end-error', {
+          error: error.message
+        });
+      }
+    }
+  });
+
+  roundTracker.on('manual-winner-selection-required', (data) => {
+    console.log('[App] Manual winner selection required');
+    
+    // Show modal to user
+    if (mainWindow) {
+      mainWindow.webContents.send('show-winner-selection', data);
+    }
+  });
+
   // Auction event handlers
   auctionManager.on('match-started', (data) => {
     // Update main room metadata with match info
     jitsiManager.updateMainRoomForMatch(data.matchId, data.matchName);
+    
+    // Start round tracking
+    if (roundTracker) {
+      roundTracker.startTracking(
+        { id: data.matchId, current_round: 0 },
+        auctionManager.teamCompositions
+      );
+      console.log('[App] Round tracking started for match:', data.matchId);
+    }
     
     if (mainWindow) {
       mainWindow.webContents.send('match-started', {
@@ -146,6 +208,12 @@ function initializeApp() {
   });
 
   auctionManager.on('match-ended', (data) => {
+    // Stop round tracking
+    if (roundTracker) {
+      roundTracker.stopTracking();
+      console.log('[App] Round tracking stopped');
+    }
+
     // Main room stays open for post-match discussion
     console.log('[App] Match ended - main voice chat room remains available');
     
@@ -200,6 +268,7 @@ ipcMain.handle('fetch-steam-profile', async (event, steamId) => {
       }
     };
   } catch (error) {
+    console.error('[IPC] fetch-steam-profile error:', error);
     return { success: false, error: error.message };
   }
 });
@@ -215,7 +284,6 @@ ipcMain.handle('register-player', async (event, playerData) => {
       playerData.profileUrl
     );
 
-    
     // Store current player
     store.set('currentPlayer', {
       steamId: player.steam_id,
@@ -231,28 +299,41 @@ ipcMain.handle('register-player', async (event, playerData) => {
     
     return { success: true, player };
   } catch (error) {
+    console.error('[IPC] register-player error:', error);
     return { success: false, error: error.message };
   }
 });
 
 ipcMain.handle('get-current-player', async () => {
-  const player = store.get('currentPlayer');
-  return { success: true, player };
+  try {
+    const player = store.get('currentPlayer');
+    return { success: true, player };
+  } catch (error) {
+    console.error('[IPC] get-current-player error:', error);
+    return { success: false, error: error.message };
+  }
 });
 
 ipcMain.handle('get-all-players', async () => {
   try {
+    ensureSupabaseInitialized();
     const players = await supabase.getAllPlayers();
     return { success: true, players };
   } catch (error) {
+    console.error('[IPC] get-all-players error:', error);
     return { success: false, error: error.message };
   }
 });
 
 ipcMain.handle('logout-player', () => {
-  store.delete('currentPlayer');
-  mainWindow.loadFile(path.join(__dirname, '../renderer/player-login.html'));
-  return { success: true };
+  try {
+    store.delete('currentPlayer');
+    mainWindow.loadFile(path.join(__dirname, '../renderer/player-login.html'));
+    return { success: true };
+  } catch (error) {
+    console.error('[IPC] logout-player error:', error);
+    return { success: false, error: error.message };
+  }
 });
 
 // IPC Handlers - Supabase Setup
@@ -266,6 +347,7 @@ ipcMain.handle('setup-supabase', async (event, { url, key }) => {
     }
     return { success: false, error: 'Failed to initialize Supabase' };
   } catch (error) {
+    console.error('[IPC] setup-supabase error:', error);
     return { success: false, error: error.message };
   }
 });
@@ -273,58 +355,71 @@ ipcMain.handle('setup-supabase', async (event, { url, key }) => {
 // IPC Handlers - Match Management
 ipcMain.handle('start-match', async (event, { matchName, players }) => {
   try {
+    ensureSupabaseInitialized();
     const match = await auctionManager.startMatch(matchName, players);
     return { success: true, match };
   } catch (error) {
+    console.error('[IPC] start-match error:', error);
     return { success: false, error: error.message };
   }
 });
 
 ipcMain.handle('end-round', async (event, { dotaMatchId, customGameName, winningTeam, playerStats }) => {
   try {
+    ensureSupabaseInitialized();
     const round = await auctionManager.endRound(dotaMatchId, customGameName, winningTeam, playerStats);
     return { success: true, round };
   } catch (error) {
+    console.error('[IPC] end-round error:', error);
     return { success: false, error: error.message };
   }
 });
 
 ipcMain.handle('create-offer', async (event, { offeringPlayerSteamId, offeredPlayerSteamId, goldAmount }) => {
   try {
+    ensureSupabaseInitialized();
     const offer = await auctionManager.createOffer(offeringPlayerSteamId, offeredPlayerSteamId, goldAmount);
     return { success: true, offer };
   } catch (error) {
+    console.error('[IPC] create-offer error:', error);
     return { success: false, error: error.message };
   }
 });
 
 ipcMain.handle('accept-offer', async (event, { offerId }) => {
   try {
+    ensureSupabaseInitialized();
     const offer = await auctionManager.acceptOffer(offerId);
     return { success: true, offer };
   } catch (error) {
+    console.error('[IPC] accept-offer error:', error);
     return { success: false, error: error.message };
   }
 });
 
 ipcMain.handle('get-current-state', async () => {
   try {
-    const auctionState = auctionManager.getCurrentState();
-    const jitsiState = jitsiManager.getCurrentState();
+    const auctionState = auctionManager ? auctionManager.getCurrentState() : {};
+    const jitsiState = jitsiManager ? jitsiManager.getCurrentState() : {};
+    const roundState = roundTracker ? roundTracker.getCurrentRoundInfo() : null;
+    
     return { 
       success: true, 
       state: {
         ...auctionState,
-        jitsi: jitsiState
+        jitsi: jitsiState,
+        currentRoundInfo: roundState
       }
     };
   } catch (error) {
+    console.error('[IPC] get-current-state error:', error);
     return { success: false, error: error.message };
   }
 });
 
 ipcMain.handle('get-match-data', async (event, { matchId }) => {
   try {
+    ensureSupabaseInitialized();
     const match = await supabase.getMatch(matchId);
     const participants = await supabase.getMatchParticipants(matchId);
     const rounds = await supabase.getRoundsByMatch(matchId);
@@ -335,6 +430,19 @@ ipcMain.handle('get-match-data', async (event, { matchId }) => {
       data: { match, participants, rounds, transfers } 
     };
   } catch (error) {
+    console.error('[IPC] get-match-data error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// IPC Handlers - Offers
+ipcMain.handle('get-offers', async (event, { roundId }) => {
+  try {
+    ensureSupabaseInitialized();
+    const offers = await supabase.getOffersByRound(roundId);
+    return { success: true, offers };
+  } catch (error) {
+    console.error('[IPC] get-offers error:', error);
     return { success: false, error: error.message };
   }
 });
@@ -351,10 +459,11 @@ ipcMain.handle('get-resumable-matches', async (event, { playerSteamId }) => {
     const matches = await matchRecovery.getResumableMatches(playerSteamId);
     return { success: true, matches };
   } catch (error) {
-    console.error('[IPC] get-resumable-matches failed:', error);
+    console.error('[IPC] get-resumable-matches error:', error);
     return { success: false, error: error.message };
   }
 });
+
 ipcMain.handle('resume-match', async (event, { matchId }) => {
   try {
     ensureSupabaseInitialized();
@@ -363,10 +472,63 @@ ipcMain.handle('resume-match', async (event, { matchId }) => {
       matchRecovery = new MatchRecovery(supabase);
     }
 
-    const match = await matchRecovery.resumeMatch(matchId);
-    return { success: true, match };
+    const restoredState = await matchRecovery.restoreMatch(matchId);
+    
+    // Restore state to AuctionManager
+    if (restoredState && auctionManager) {
+      auctionManager.currentMatch = restoredState.match;
+      auctionManager.roundNumber = restoredState.currentRound;
+      auctionManager.teamCompositions = restoredState.teamCompositions;
+      auctionManager.playerGoldBalances = restoredState.playerGoldBalances;
+      auctionManager.gamePhase = restoredState.gamePhase;
+      auctionManager.pendingOffers = restoredState.pendingOffers;
+      auctionManager.currentRound = restoredState.latestRound;
+      
+      // Restart round tracking if in playing phase
+      if (roundTracker && restoredState.gamePhase === 'playing') {
+        roundTracker.startTracking(
+          restoredState.match,
+          restoredState.teamCompositions
+        );
+      }
+      
+      console.log('[App] Match state restored successfully');
+    }
+    
+    return { success: true, match: restoredState };
   } catch (error) {
-    console.error('[IPC] resume-match failed:', error);
+    console.error('[IPC] resume-match error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('abandon-match', async (event, { matchId }) => {
+  try {
+    ensureSupabaseInitialized();
+
+    if (!matchRecovery) {
+      matchRecovery = new MatchRecovery(supabase);
+    }
+
+    const result = await matchRecovery.abandonMatch(matchId);
+    return result;
+  } catch (error) {
+    console.error('[IPC] abandon-match error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// IPC Handler - Manual Winner Selection
+ipcMain.handle('set-round-winner', async (event, { winningTeam }) => {
+  try {
+    if (!roundTracker) {
+      throw new Error('Round tracker not initialized');
+    }
+    
+    const success = roundTracker.manuallySetWinner(winningTeam);
+    return { success };
+  } catch (error) {
+    console.error('[IPC] set-round-winner error:', error);
     return { success: false, error: error.message };
   }
 });
@@ -374,27 +536,32 @@ ipcMain.handle('resume-match', async (event, { matchId }) => {
 // IPC Handlers - Jitsi
 ipcMain.handle('get-main-room-info', async () => {
   try {
-    const info = jitsiManager.getMainRoomInfo();
+    const info = jitsiManager ? jitsiManager.getMainRoomInfo() : null;
     return { success: true, info };
   } catch (error) {
+    console.error('[IPC] get-main-room-info error:', error);
     return { success: false, error: error.message };
   }
 });
 
 ipcMain.handle('get-jitsi-config', async (event, { playerSteamId, isLosingTeam, phase }) => {
   try {
-    const config = jitsiManager.getPlayerRoomConfig(playerSteamId, isLosingTeam, phase);
+    const config = jitsiManager ? jitsiManager.getPlayerRoomConfig(playerSteamId, isLosingTeam, phase) : null;
     return { success: true, config };
   } catch (error) {
+    console.error('[IPC] get-jitsi-config error:', error);
     return { success: false, error: error.message };
   }
 });
 
 ipcMain.handle('set-jitsi-domain', async (event, { domain }) => {
   try {
-    jitsiManager.setJitsiDomain(domain);
+    if (jitsiManager) {
+      jitsiManager.setJitsiDomain(domain);
+    }
     return { success: true };
   } catch (error) {
+    console.error('[IPC] set-jitsi-domain error:', error);
     return { success: false, error: error.message };
   }
 });
@@ -422,10 +589,12 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     if (gsiServer) gsiServer.stop();
     if (jitsiManager) jitsiManager.cleanup();
+    if (roundTracker) roundTracker.stopTracking();
     app.quit();
   }
 });
 
 app.on('before-quit', () => {
   if (jitsiManager) jitsiManager.cleanup();
+  if (roundTracker) roundTracker.stopTracking();
 });

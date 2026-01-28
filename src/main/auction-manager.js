@@ -45,7 +45,8 @@ class AuctionManager extends EventEmitter {
       this.emit('match-started', {
         matchId: this.currentMatch.id,
         matchName,
-        players
+        players,
+        teamCompositions: this.teamCompositions
       });
 
       return this.currentMatch;
@@ -55,7 +56,7 @@ class AuctionManager extends EventEmitter {
     }
   }
 
-  async endRound(dotaMatchId, customGameName, winningTeam, playerStats) {
+  async endRound(dotaMatchId, customGameName, winningTeam, playerStats, gameDuration = null, teamNetWorths = null, gameMode = null) {
     try {
       if (!this.currentMatch) {
         throw new Error('No active match');
@@ -63,13 +64,22 @@ class AuctionManager extends EventEmitter {
 
       this.roundNumber++;
 
-      // Create round record
+      // Calculate team net worths if not provided
+      if (!teamNetWorths && playerStats) {
+        teamNetWorths = this.calculateTeamNetWorths(playerStats);
+      }
+
+      // Create round record with enhanced data
       this.currentRound = await supabase.createRound(
         this.currentMatch.id,
         this.roundNumber,
         dotaMatchId,
         customGameName,
-        winningTeam
+        winningTeam,
+        teamNetWorths?.team1 || null, // NEW: Team 1 net worth
+        teamNetWorths?.teamA || null, // NEW: Team A net worth
+        gameDuration, // NEW: Game duration in seconds
+        gameMode // NEW: Game mode
       );
 
       // Calculate gold changes
@@ -77,32 +87,70 @@ class AuctionManager extends EventEmitter {
       const goldLosses = this.calculateGoldLosses(losingTeam);
       const goldGains = this.calculateGoldGains(winningTeam, goldLosses);
 
-      // Save player stats and update gold
-      for (const [steamId, stats] of Object.entries(playerStats)) {
+      // Save comprehensive player stats and update gold
+      // IMPORTANT: We need to update gold for ALL players, not just those with stats
+      const allPlayers = [...this.teamCompositions.team1, ...this.teamCompositions.teamA];
+      
+      for (const steamId of allPlayers) {
         const team = this.getPlayerTeam(steamId);
         const goldBefore = this.playerGoldBalances.get(steamId);
         const goldAfter = team === winningTeam ? goldGains[steamId] : goldLosses[steamId];
+        
+        // Get stats for this player (may be empty if not available)
+        const stats = playerStats[steamId] || {};
 
+        // Save comprehensive stats
         await supabase.addRoundParticipant(
           this.currentRound.id,
           steamId,
           team,
-          stats.hero,
-          stats.kills,
-          stats.deaths,
-          stats.assists,
+          stats.hero_name || stats.hero || 'unknown', // Support both field names
+          stats.kills || 0,
+          stats.deaths || 0,
+          stats.assists || 0,
           goldBefore,
-          goldAfter
+          goldAfter,
+          // NEW PARAMETERS:
+          stats.last_hits || 0,
+          stats.denies || 0,
+          stats.gold_per_min || 0,
+          stats.xp_per_min || 0,
+          stats.hero_damage || 0,
+          stats.tower_damage || 0,
+          stats.hero_healing || 0,
+          stats.level || 1,
+          stats.items || null, // JSON array
+          stats.net_worth || 0,
+          stats.hero_id || null
         );
 
+        // Update in-memory gold balance
         this.playerGoldBalances.set(steamId, goldAfter);
+        
+        // Update database gold balance
         await supabase.updateParticipantGold(this.currentMatch.id, steamId, goldAfter);
+        
+        console.log(`[Auction] Updated ${steamId} gold in DB: ${goldBefore} → ${goldAfter}`);
       }
 
       // Update match round number
       await supabase.updateMatch(this.currentMatch.id, {
         current_round: this.roundNumber
       });
+
+      // Log event
+      await supabase.logMatchEvent(
+        this.currentMatch.id,
+        this.currentRound.id,
+        'round_ended',
+        {
+          round_number: this.roundNumber,
+          winning_team: winningTeam,
+          losing_team: losingTeam,
+          team_net_worths: teamNetWorths,
+          game_duration: gameDuration
+        }
+      );
 
       // Check for match winner (solo player on winning team)
       const winner = this.checkForMatchWinner(winningTeam);
@@ -113,6 +161,18 @@ class AuctionManager extends EventEmitter {
 
       // Move to auction phase
       this.gamePhase = 'auction';
+      
+      // Log auction start
+      await supabase.logMatchEvent(
+        this.currentMatch.id,
+        this.currentRound.id,
+        'auction_started',
+        {
+          losing_team: losingTeam,
+          gold_losses: goldLosses
+        }
+      );
+
       this.emit('round-ended', {
         roundId: this.currentRound.id,
         roundNumber: this.roundNumber,
@@ -124,35 +184,97 @@ class AuctionManager extends EventEmitter {
       return this.currentRound;
     } catch (error) {
       console.error('[Auction] Error ending round:', error);
+      
+      // Log error event
+      await supabase.logMatchEvent(
+        this.currentMatch.id,
+        this.currentRound?.id,
+        'error_occurred',
+        {
+          error: error.message,
+          context: 'end_round'
+        }
+      );
+      
       throw error;
     }
   }
 
+  calculateTeamNetWorths(playerStats) {
+    // NEW METHOD: Calculate team net worths from player stats
+    let team1Total = 0;
+    let teamATotal = 0;
+
+    for (const [steamId, stats] of Object.entries(playerStats)) {
+      const team = this.getPlayerTeam(steamId);
+      const netWorth = stats.net_worth || 0;
+
+      if (team === 'team1') {
+        team1Total += netWorth;
+      } else if (team === 'teamA') {
+        teamATotal += netWorth;
+      }
+    }
+
+    return {
+      team1: team1Total,
+      teamA: teamATotal
+    };
+  }
+
   calculateGoldLosses(losingTeam) {
+    // LOSING TEAM: Each player loses 50% of their gold
     const losses = {};
     const teamPlayers = this.teamCompositions[losingTeam];
 
     for (const steamId of teamPlayers) {
       const currentGold = this.playerGoldBalances.get(steamId);
-      losses[steamId] = Math.floor(currentGold * 0.5);
+      const goldLost = Math.floor(currentGold * 0.5);
+      const newBalance = currentGold - goldLost;
+      
+      losses[steamId] = newBalance;
+      
+      console.log(`[Gold] ${steamId} (losing team): ${currentGold} → ${newBalance} (lost ${goldLost})`);
     }
 
     return losses;
   }
 
   calculateGoldGains(winningTeam, goldLosses) {
+    // WINNING TEAM: Each player gets:
+    // 1. Base win bonus: +1000 gold
+    // 2. Share of gold lost by losing team (split evenly among winners)
+    
     const gains = {};
     const teamPlayers = this.teamCompositions[winningTeam];
     
-    // Calculate total gold lost
-    const totalLost = Object.values(goldLosses).reduce((sum, loss) => sum + loss, 0);
+    // Calculate total gold lost by losing team (for redistribution)
+    // goldLosses contains new balances, so we need to calculate what was actually lost
+    let totalLostGold = 0;
+    const losingTeam = winningTeam === 'team1' ? 'teamA' : 'team1';
+    const losingPlayers = this.teamCompositions[losingTeam];
     
-    // Distribute evenly among winners
-    const sharePerPlayer = Math.floor(totalLost / teamPlayers.length);
+    for (const steamId of losingPlayers) {
+      const oldBalance = this.playerGoldBalances.get(steamId);
+      const newBalance = goldLosses[steamId];
+      const amountLost = oldBalance - newBalance;
+      totalLostGold += amountLost;
+    }
+    
+    console.log(`[Gold] Total gold lost by losing team: ${totalLostGold}`);
+    
+    // Split lost gold evenly among winners
+    const sharePerPlayer = Math.floor(totalLostGold / teamPlayers.length);
+    const baseWinBonus = 1000;
 
     for (const steamId of teamPlayers) {
       const currentGold = this.playerGoldBalances.get(steamId);
-      gains[steamId] = currentGold + 1000 + sharePerPlayer;
+      const totalGain = baseWinBonus + sharePerPlayer;
+      const newBalance = currentGold + totalGain;
+      
+      gains[steamId] = newBalance;
+      
+      console.log(`[Gold] ${steamId} (winning team): ${currentGold} → ${newBalance} (+${baseWinBonus} base + ${sharePerPlayer} share = +${totalGain})`);
     }
 
     return gains;
@@ -218,6 +340,20 @@ class AuctionManager extends EventEmitter {
 
       this.pendingOffers.push(offer);
 
+      // NEW: Log event
+      await supabase.logMatchEvent(
+        this.currentMatch.id,
+        this.currentRound.id,
+        'offer_created',
+        {
+          offer_id: offer.id,
+          offering_player: offeringPlayerSteamId,
+          offered_player: offeredPlayerSteamId,
+          gold_amount: goldAmount
+        },
+        offeringPlayerSteamId
+      );
+
       this.emit('offer-created', offer);
       
       return offer;
@@ -267,6 +403,30 @@ class AuctionManager extends EventEmitter {
 
       // Back to playing phase
       this.gamePhase = 'playing';
+
+      // NEW: Log events
+      await supabase.logMatchEvent(
+        this.currentMatch.id,
+        this.currentRound.id,
+        'offer_accepted',
+        {
+          offer_id: offerId,
+          offering_player: offer.offering_player_steam_id,
+          offered_player: offer.offered_player_steam_id,
+          gold_amount: offer.gold_amount,
+          from_team: winningTeam,
+          to_team: losingTeam
+        }
+      );
+
+      await supabase.logMatchEvent(
+        this.currentMatch.id,
+        this.currentRound.id,
+        'auction_ended',
+        {
+          accepted_offer_id: offerId
+        }
+      );
 
       this.emit('offer-accepted', {
         offer,
@@ -343,7 +503,8 @@ class AuctionManager extends EventEmitter {
       teamCompositions: this.teamCompositions,
       playerGoldBalances: Object.fromEntries(this.playerGoldBalances),
       pendingOffers: this.pendingOffers,
-      offerLimits: this.getMinMaxOffer()
+      offerLimits: this.getMinMaxOffer(),
+      currentRound: this.currentRound
     };
   }
 }

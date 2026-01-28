@@ -21,8 +21,10 @@ class GSIServer extends EventEmitter {
     }
     this.logFile = path.join(logsDir, 'gsi-debug.log');
 
-    // CRITICAL: Parse body as text first, then try JSON
-    this.app.use(bodyParser.text({ type: '*/*' }));
+    // CRITICAL: Parse both JSON and text bodies
+    // JSON parser MUST come first for proper handling
+    this.app.use(bodyParser.json({ type: 'application/json', limit: '50mb' }));
+    this.app.use(bodyParser.text({ type: '*/*', limit: '50mb' }));
 
     // Log all incoming requests with details
     this.app.use((req, res, next) => {
@@ -32,8 +34,8 @@ Method: ${req.method}
 Path: ${req.path}
 Headers: ${JSON.stringify(req.headers, null, 2)}
 Body Type: ${typeof req.body}
-Body Length: ${req.body ? req.body.length : 0}
-Body Preview: ${req.body ? req.body.substring(0, 500) : 'empty'}
+Body Length: ${req.body ? (typeof req.body === 'string' ? req.body.length : JSON.stringify(req.body).length) : 0}
+Body Preview: ${req.body ? (typeof req.body === 'string' ? req.body.substring(0, 500) : JSON.stringify(req.body).substring(0, 500)) : 'empty'}
 ---`;
       
       console.log(logMsg);
@@ -48,13 +50,14 @@ Body Preview: ${req.body ? req.body.substring(0, 500) : 'empty'}
       let gameData = null;
       
       try {
-        // Try to parse as JSON
-        if (typeof req.body === 'string') {
+        // Body parser should have already parsed it
+        if (typeof req.body === 'object' && req.body !== null) {
+          gameData = req.body;
+          console.log('[GSI] Body already parsed as object');
+        } else if (typeof req.body === 'string') {
+          // Fallback: try to parse as JSON
           gameData = JSON.parse(req.body);
           console.log('[GSI] Successfully parsed JSON from string body');
-        } else if (typeof req.body === 'object') {
-          gameData = req.body;
-          console.log('[GSI] Body is already an object');
         }
       } catch (e) {
         console.error('[GSI] Failed to parse body as JSON:', e.message);
