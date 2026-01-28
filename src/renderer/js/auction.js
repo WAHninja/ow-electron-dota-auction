@@ -10,8 +10,8 @@ let selectedWinningTeam = null;
 // UI Elements - Navigation
 const openJitsiBtn = document.getElementById('openJitsiBtn');
 const viewHistoryBtn = document.getElementById('viewHistoryBtn');
-const settingsBtn = document.getElementById('settingsBtn')
-const resumeMatchBtn = document.createElement('button');;
+const settingsBtn = document.getElementById('settingsBtn');
+const resumeMatchBtn = document.createElement('button');
 resumeMatchBtn.className = 'btn-nav';
 resumeMatchBtn.innerHTML = '<span class="icon">↩️</span> Resume Match';
 resumeMatchBtn.addEventListener('click', showResumeMatchModal);
@@ -64,7 +64,6 @@ const cancelCreateMatch = document.getElementById('cancelCreateMatch');
 const confirmCreateMatch = document.getElementById('confirmCreateMatch');
 const matchNameInput = document.getElementById('matchNameInput');
 const playersList = document.getElementById('playersList');
-const addPlayerBtn = document.getElementById('addPlayerBtn');
 
 const endRoundModal = document.getElementById('endRoundModal');
 const closeEndRound = document.getElementById('closeEndRound');
@@ -127,7 +126,6 @@ function setupEventListeners() {
   closeCreateMatch.addEventListener('click', () => hideModal(createMatchModal));
   cancelCreateMatch.addEventListener('click', () => hideModal(createMatchModal));
   confirmCreateMatch.addEventListener('click', handleCreateMatch);
-  addPlayerBtn.addEventListener('click', addPlayerToList);
   
   // End Round Modal
   closeEndRound.addEventListener('click', () => hideModal(endRoundModal));
@@ -167,6 +165,7 @@ function setupEventListeners() {
   
   // IPC Event Listeners
   ipcRenderer.on('match-started', handleMatchStarted);
+  ipcRenderer.on('round-started', handleRoundStarted);
   ipcRenderer.on('round-ended', handleRoundEnded);
   ipcRenderer.on('offer-created', handleOfferCreated);
   ipcRenderer.on('offer-accepted', handleOfferAccepted);
@@ -175,6 +174,8 @@ function setupEventListeners() {
   ipcRenderer.on('jitsi-main-room-ready', handleJitsiReady);
   ipcRenderer.on('jitsi-auction-room-created', handleAuctionRoomCreated);
   ipcRenderer.on('jitsi-return-to-main', handleReturnToMain);
+  ipcRenderer.on('show-winner-selection', handleShowWinnerSelection);
+  ipcRenderer.on('round-end-error', handleRoundEndError);
 }
 
 // State Management
@@ -206,9 +207,14 @@ function updateDashboard() {
     // Update teams
     updateTeams();
     
-    // Show roster
-    showContent('roster');
-    renderRoster();
+    // Show appropriate content based on phase
+    if (currentState.gamePhase === 'auction') {
+      showContent('auction');
+      // Auction UI will be rendered by handleRoundEnded event
+    } else {
+      showContent('roster');
+      renderRoster();
+    }
   } else {
     noMatchPanel.style.display = 'block';
     matchInfoPanel.style.display = 'none';
@@ -270,6 +276,7 @@ function renderRoster() {
 }
 
 function getPlayerTeam(steamId) {
+  if (!currentState.teamCompositions) return 'unknown';
   if (currentState.teamCompositions.team1.includes(steamId)) return 'team1';
   if (currentState.teamCompositions.teamA.includes(steamId)) return 'teamA';
   return 'unknown';
@@ -434,9 +441,39 @@ function renderResumableMatches(matches) {
 
     return `
       <div class="match-card" data-id="${match.id}">
-        <h3>${match.match_name || 'Unnamed Match'}</h3>
-        <p>${team1} vs ${teamA}</p>
-        <small>Created ${created} • Last activity ${last}</small>
+        <div class="match-card-header">
+          <div class="match-card-title">
+            <h3>${match.match_name || 'Unnamed Match'}</h3>
+            <div class="match-card-meta">
+              <span>Round ${match.current_round}</span>
+              <span>•</span>
+              <span>Created ${created}</span>
+            </div>
+          </div>
+          <span class="match-status-badge playing">Active</span>
+        </div>
+        <div class="match-card-stats">
+          <div class="stat-box">
+            <div class="stat-box-label">Players</div>
+            <div class="stat-box-value">${match.participants.length}</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-box-label">Rounds</div>
+            <div class="stat-box-value">${match.totalRounds}</div>
+          </div>
+          <div class="stat-box">
+            <div class="stat-box-label">Last Activity</div>
+            <div class="stat-box-value" style="font-size: 0.9rem;">${last}</div>
+          </div>
+        </div>
+        <div class="match-card-teams">
+          <div class="team-preview team1">
+            <strong>Team 1: ${team1}</strong>
+          </div>
+          <div class="team-preview teamA">
+            <strong>Team A: ${teamA}</strong>
+          </div>
+        </div>
       </div>
     `;
   }).join('');
@@ -454,10 +491,50 @@ function showMatchDetails(match) {
   hideModal(resumeMatchModal);
   showModal(matchDetailsModal);
 
+  const team1Players = match.participants.filter(p => p.initial_team === 'team1');
+  const teamAPlayers = match.participants.filter(p => p.initial_team === 'teamA');
+
   matchDetailsContent.innerHTML = `
-    <h3>${match.match_name}</h3>
-    <p>Round ${match.current_round}</p>
-    <p>Total rounds played: ${match.totalRounds}</p>
+    <div class="match-detail-section">
+      <h3>${match.match_name}</h3>
+      <div class="match-card-meta">
+        <span>Round ${match.current_round}</span>
+        <span>•</span>
+        <span>Total rounds played: ${match.totalRounds}</span>
+        <span>•</span>
+        <span>Created: ${new Date(match.created_at).toLocaleString()}</span>
+      </div>
+    </div>
+
+    <div class="match-detail-section">
+      <h4>Team 1 (${team1Players.length} players)</h4>
+      <div class="player-list-detailed">
+        ${team1Players.map(p => `
+          <div class="player-card-detailed">
+            <img src="${p.players.avatar_url || ''}" style="width: 40px; height: 40px; border-radius: 50%;" />
+            <div>
+              <div><strong>${p.players.username}</strong></div>
+              <div style="font-size: 0.85rem; opacity: 0.7;">💰 ${p.current_gold} gold</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    <div class="match-detail-section">
+      <h4>Team A (${teamAPlayers.length} players)</h4>
+      <div class="player-list-detailed">
+        ${teamAPlayers.map(p => `
+          <div class="player-card-detailed">
+            <img src="${p.players.avatar_url || ''}" style="width: 40px; height: 40px; border-radius: 50%;" />
+            <div>
+              <div><strong>${p.players.username}</strong></div>
+              <div style="font-size: 0.85rem; opacity: 0.7;">💰 ${p.current_gold} gold</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
   `;
 }
 
@@ -465,9 +542,10 @@ async function handleResumeMatch() {
   if (!selectedMatchToResume) return;
 
   confirmResumeMatch.disabled = true;
+  confirmResumeMatch.innerHTML = '<span class="spinner"></span> Resuming...';
 
   try {
-    const result = await ipcRenderer.invoke('restore-match', {
+    const result = await ipcRenderer.invoke('resume-match', {
       matchId: selectedMatchToResume.id
     });
 
@@ -476,10 +554,13 @@ async function handleResumeMatch() {
       logActivity(`Match resumed: ${selectedMatchToResume.match_name}`, 'success');
       await refreshState();
     } else {
-      alert(result.error);
+      alert(result.error || 'Failed to resume match');
     }
+  } catch (error) {
+    alert('Error resuming match: ' + error.message);
   } finally {
     confirmResumeMatch.disabled = false;
+    confirmResumeMatch.innerHTML = '▶ Resume Match';
   }
 }
 
@@ -487,6 +568,8 @@ async function handleAbandonMatch() {
   if (!selectedMatchToResume) return;
 
   if (!confirm(`Abandon "${selectedMatchToResume.match_name}"?`)) return;
+
+  abandonMatchBtn.disabled = true;
 
   try {
     const result = await ipcRenderer.invoke('abandon-match', {
@@ -498,27 +581,21 @@ async function handleAbandonMatch() {
       selectedMatchToResume = null;
       showResumeMatchModal();
       logActivity('Match abandoned', 'info');
+    } else {
+      alert(result.error || 'Failed to abandon match');
     }
   } catch (err) {
-    alert('Failed to abandon match');
+    alert('Error abandoning match: ' + err.message);
+  } finally {
+    abandonMatchBtn.disabled = false;
   }
 }
-
-
-// Initialize on load
-window.addEventListener('DOMContentLoaded', () => {
-  initialize();
-  setTimeout(checkForResumableMatches, 2000);
-});
-
-// This continues from auction.js Part 1
-// Add these functions to the same file
 
 // Player Management for Create Match
 async function populatePlayersList() {
   const result = await ipcRenderer.invoke('get-all-players');
   
-  if (!result.success || !result.players) {
+  if (!result.success || !result.players || result.players.length === 0) {
     playersList.innerHTML = '<p class="text-muted">No players registered yet</p>';
     return;
   }
@@ -562,36 +639,7 @@ createMatchBtn.addEventListener('click', () => {
   populatePlayersList();
 });
 
-let playersToAdd = [];
-
-function addPlayerToList() {
-  const playerItem = document.createElement('div');
-  playerItem.className = 'player-item';
-  playerItem.innerHTML = `
-    <input type="text" class="player-steam-id" placeholder="Steam ID (76561198...)">
-    <input type="text" class="player-username" placeholder="Username">
-    <select class="player-team">
-      <option value="team1">Team 1</option>
-      <option value="teamA">Team A</option>
-      <option value="random">Random</option>
-    </select>
-    <button class="btn-icon btn-danger" onclick="this.parentElement.remove()">
-      <span>×</span>
-    </button>
-  `;
-  playersList.appendChild(playerItem);
-}
-
-// Add initial players on modal open
-createMatchBtn.addEventListener('click', () => {
-  playersList.innerHTML = '';
-  // Add 4 default player slots
-  for (let i = 0; i < 4; i++) {
-    addPlayerToList();
-  }
-});
-
-// Replace player collection with:
+// Handle Create Match
 async function handleCreateMatch() {
   const matchName = matchNameInput.value.trim();
   
@@ -635,6 +683,9 @@ async function handleCreateMatch() {
     }
   });
   
+  confirmCreateMatch.disabled = true;
+  confirmCreateMatch.innerHTML = '<span class="spinner"></span> Creating...';
+  
   // Create match
   try {
     const result = await ipcRenderer.invoke('start-match', {
@@ -644,6 +695,7 @@ async function handleCreateMatch() {
     
     if (result.success) {
       hideModal(createMatchModal);
+      matchNameInput.value = '';
       logActivity(`Match created: ${matchName}`, 'success');
       await refreshState();
     } else {
@@ -651,6 +703,9 @@ async function handleCreateMatch() {
     }
   } catch (error) {
     alert('Error creating match: ' + error.message);
+  } finally {
+    confirmCreateMatch.disabled = false;
+    confirmCreateMatch.innerHTML = '<span class="icon">🚀</span> Start Match';
   }
 }
 
@@ -672,8 +727,8 @@ function selectWinningTeam(team) {
 }
 
 async function handleEndRound() {
-  if (!selectedWinningTeam || !gsiData) {
-    alert('Please select a winning team and ensure GSI data is available');
+  if (!selectedWinningTeam) {
+    alert('Please select a winning team');
     return;
   }
   
@@ -681,12 +736,12 @@ async function handleEndRound() {
   confirmEndRound.innerHTML = '<span class="spinner"></span> Ending Round...';
   
   try {
-    // Extract player stats from GSI data
-    const playerStats = extractPlayerStats(gsiData);
+    // Extract player stats from GSI data if available
+    const playerStats = gsiData ? extractPlayerStats(gsiData) : {};
     
     const result = await ipcRenderer.invoke('end-round', {
-      dotaMatchId: gsiData.map?.matchid || 'unknown',
-      customGameName: gsiData.map?.customgamename || '',
+      dotaMatchId: gsiData?.map?.matchid || 'manual_' + Date.now(),
+      customGameName: gsiData?.map?.customgamename || '',
       winningTeam: selectedWinningTeam,
       playerStats
     });
@@ -694,7 +749,9 @@ async function handleEndRound() {
     if (result.success) {
       hideModal(endRoundModal);
       selectedWinningTeam = null;
-      logActivity(`Round ${currentState.roundNumber + 1} ended - ${selectedWinningTeam} won`, 'success');
+      selectTeam1Btn.classList.remove('selected');
+      selectTeamABtn.classList.remove('selected');
+      logActivity(`Round ended - ${selectedWinningTeam} won`, 'success');
       await refreshState();
     } else {
       alert('Failed to end round: ' + result.error);
@@ -709,7 +766,6 @@ async function handleEndRound() {
 
 function extractPlayerStats(data) {
   // This would extract stats from GSI data
-  // For now, return mock data structure
   const stats = {};
   
   if (data.player && data.hero) {
@@ -741,12 +797,17 @@ function handleMatchStarted(event, data) {
   refreshState();
 }
 
-function handleRoundEnded(event, data) {
-  logActivity(`Round ${data.roundNumber} ended - ${data.winningTeam} won`, 'success');
+function handleRoundStarted(event, data) {
+  logActivity(`Round ${data.roundNumber} started - Match ID: ${data.dotaMatchId}`, 'info');
+  refreshState();
+}
+
+async function handleRoundEnded(event, data) {
+  logActivity(`Round ${data.roundNumber} ended - ${data.winningTeam} won!`, 'success');
   
   // Show auction UI
   showContent('auction');
-  renderAuctionUI(data);
+  await renderAuctionUI(data);
   
   refreshState();
 }
@@ -798,11 +859,47 @@ function handleReturnToMain(event, data) {
   voiceStatusEl.textContent = 'Main Room Active';
 }
 
+function handleShowWinnerSelection(event, data) {
+  logActivity('Manual winner selection required', 'info');
+  showModal(endRoundModal);
+  
+  // Pre-fill with round data if available
+  if (data.roundNumber) {
+    logActivity(`Please select winner for round ${data.roundNumber}`, 'info');
+  }
+}
+
+function handleRoundEndError(event, data) {
+  logActivity(`Error ending round: ${data.error}`, 'error');
+  alert('Failed to end round automatically. Please use manual round end.');
+}
+
 // Auction UI
-function renderAuctionUI(roundData) {
+async function renderAuctionUI(roundData) {
   const winningTeam = roundData.winningTeam;
   const losingTeam = roundData.losingTeam;
   const offerLimits = currentState.offerLimits;
+  
+  // Get current player
+  const currentPlayerResult = await ipcRenderer.invoke('get-current-player');
+  const currentPlayerSteamId = currentPlayerResult.player?.steamId;
+  
+  // Get all players to map Steam IDs to usernames
+  const playersResult = await ipcRenderer.invoke('get-all-players');
+  const playerMap = new Map();
+  if (playersResult.success && playersResult.players) {
+    playersResult.players.forEach(p => {
+      playerMap.set(p.steam_id, p.username);
+    });
+  }
+  
+  // Helper function to get username or fallback
+  const getPlayerName = (steamId) => {
+    return playerMap.get(steamId) || getSteamIdShort(steamId);
+  };
+  
+  // Check if current player is on winning team
+  const isCurrentPlayerOnWinningTeam = currentState.teamCompositions[winningTeam].includes(currentPlayerSteamId);
   
   auctionContent.innerHTML = `
     <div class="auction-container">
@@ -815,34 +912,47 @@ function renderAuctionUI(roundData) {
         <!-- Winning Team Section -->
         <div class="auction-section">
           <h4>Winning Team - Make Offers</h4>
-          <p class="section-hint">Select a teammate to offer (${offerLimits.minOffer} - ${offerLimits.maxOffer} gold)</p>
-          
-          <div id="offerForm" class="offer-form">
-            <select id="offeringPlayer" class="form-select">
-              <option value="">Your Steam ID...</option>
-              ${currentState.teamCompositions[winningTeam].map(steamId => 
-                `<option value="${steamId}">${getSteamIdShort(steamId)} (${currentState.playerGoldBalances[steamId]} gold)</option>`
-              ).join('')}
-            </select>
+          ${isCurrentPlayerOnWinningTeam ? `
+            <p class="section-hint">Select a teammate to offer (${offerLimits.minOffer} - ${offerLimits.maxOffer} gold)</p>
+            
+            <div id="offerForm" class="offer-form">
+              <div class="form-group">
+                <label>You are:</label>
+                <div style="background: rgba(76, 175, 80, 0.2); padding: 12px; border-radius: 8px; margin-bottom: 15px;">
+                  <strong>${getPlayerName(currentPlayerSteamId)}</strong>
+                  <span style="opacity: 0.8; margin-left: 10px;">💰 ${currentState.playerGoldBalances[currentPlayerSteamId]} gold</span>
+                </div>
+              </div>
 
-            <select id="offeredPlayer" class="form-select">
-              <option value="">Select teammate to offer...</option>
-            </select>
+              <select id="offeredPlayer" class="form-select">
+                <option value="">Select teammate to offer...</option>
+                ${currentState.teamCompositions[winningTeam]
+                  .filter(steamId => steamId !== currentPlayerSteamId)
+                  .map(steamId => 
+                    `<option value="${steamId}">${getPlayerName(steamId)} (💰 ${currentState.playerGoldBalances[steamId]} gold)</option>`
+                  ).join('')}
+              </select>
 
-            <input 
-              type="number" 
-              id="offerAmount" 
-              class="form-input" 
-              placeholder="Gold amount"
-              min="${offerLimits.minOffer}"
-              max="${offerLimits.maxOffer}"
-            >
+              <input 
+                type="number" 
+                id="offerAmount" 
+                class="form-input" 
+                placeholder="Gold amount (${offerLimits.minOffer} - ${offerLimits.maxOffer})"
+                min="${offerLimits.minOffer}"
+                max="${offerLimits.maxOffer}"
+              >
 
-            <button id="submitOfferBtn" class="btn-primary btn-block">
-              <span class="icon">💰</span>
-              Submit Offer
-            </button>
-          </div>
+              <button id="submitOfferBtn" class="btn-primary btn-block">
+                <span class="icon">💰</span>
+                Submit Offer
+              </button>
+            </div>
+          ` : `
+            <p class="text-muted" style="text-align: center; padding: 40px 20px;">
+              You are on the losing team.<br>
+              Wait for offers from the winning team.
+            </p>
+          `}
         </div>
 
         <!-- Losing Team Section -->
@@ -859,47 +969,42 @@ function renderAuctionUI(roundData) {
       <div class="auction-info">
         <strong>Gold Distribution:</strong><br>
         • Losing team: Each player lost 50% of their gold<br>
-        • Winning team: Each player gained ${1000 + Math.floor(Object.values(roundData.goldChanges.goldLosses).reduce((a, b) => a + b, 0) / currentState.teamCompositions[winningTeam].length)} gold
+        • Winning team: Each player gained gold from the win
       </div>
     </div>
   `;
 
   // Set up auction event listeners
-  setupAuctionListeners();
+  setupAuctionListeners(currentPlayerSteamId);
   
   // Load existing offers
   refreshAuctionUI();
 }
 
-function setupAuctionListeners() {
-  const offeringPlayerSelect = document.getElementById('offeringPlayer');
+function setupAuctionListeners(currentPlayerSteamId) {
   const offeredPlayerSelect = document.getElementById('offeredPlayer');
   const submitOfferBtn = document.getElementById('submitOfferBtn');
 
-  // Update offered player options when offering player changes
-  offeringPlayerSelect?.addEventListener('change', (e) => {
-    const offeringPlayerId = e.target.value;
-    if (!offeringPlayerId) return;
-
-    const winningTeam = currentState.teamCompositions.team1.includes(offeringPlayerId) ? 'team1' : 'teamA';
-    const teammates = currentState.teamCompositions[winningTeam].filter(id => id !== offeringPlayerId);
-
-    offeredPlayerSelect.innerHTML = `
-      <option value="">Select teammate to offer...</option>
-      ${teammates.map(steamId => 
-        `<option value="${steamId}">${getSteamIdShort(steamId)} (${currentState.playerGoldBalances[steamId]} gold)</option>`
-      ).join('')}
-    `;
-  });
+  // No need to update offered player options on change since current player is already set
+  // The offered player dropdown is already populated with teammates
 
   // Submit offer
   submitOfferBtn?.addEventListener('click', async () => {
-    const offeringPlayerId = offeringPlayerSelect.value;
-    const offeredPlayerId = offeredPlayerSelect.value;
-    const goldAmount = parseInt(document.getElementById('offerAmount').value);
+    const offeredPlayerId = offeredPlayerSelect?.value;
+    const goldAmount = parseInt(document.getElementById('offerAmount')?.value);
 
-    if (!offeringPlayerId || !offeredPlayerId || !goldAmount) {
-      alert('Please fill in all fields');
+    if (!currentPlayerSteamId) {
+      alert('Could not determine your player ID');
+      return;
+    }
+
+    if (!offeredPlayerId || !goldAmount) {
+      alert('Please select a teammate and enter gold amount');
+      return;
+    }
+
+    if (goldAmount < currentState.offerLimits.minOffer || goldAmount > currentState.offerLimits.maxOffer) {
+      alert(`Gold amount must be between ${currentState.offerLimits.minOffer} and ${currentState.offerLimits.maxOffer}`);
       return;
     }
 
@@ -908,13 +1013,18 @@ function setupAuctionListeners() {
 
     try {
       const result = await ipcRenderer.invoke('create-offer', {
-        offeringPlayerSteamId: offeringPlayerId,
+        offeringPlayerSteamId: currentPlayerSteamId,
         offeredPlayerSteamId: offeredPlayerId,
         goldAmount
       });
 
       if (result.success) {
         logActivity('Offer submitted successfully', 'success');
+        // Clear form
+        if (offeredPlayerSelect) offeredPlayerSelect.value = '';
+        const amountInput = document.getElementById('offerAmount');
+        if (amountInput) amountInput.value = '';
+        // Refresh offers
         refreshAuctionUI();
       } else {
         alert('Failed to create offer: ' + result.error);
@@ -929,16 +1039,94 @@ function setupAuctionListeners() {
 }
 
 async function refreshAuctionUI() {
-  // This would fetch and display current offers
-  // For now, just a placeholder
+  if (!currentState || !currentState.currentRound) {
+    console.log('[Auction] No current round to fetch offers for');
+    return;
+  }
+
   const offersListEl = document.getElementById('offersList');
-  if (offersListEl) {
-    offersListEl.innerHTML = '<p class="text-muted">Loading offers...</p>';
+  if (!offersListEl) return;
+
+  offersListEl.innerHTML = '<p class="text-muted">Loading offers...</p>';
+
+  try {
+    const result = await ipcRenderer.invoke('get-offers', {
+      roundId: currentState.currentRound.id
+    });
+
+    if (result.success && result.offers && result.offers.length > 0) {
+      await renderOffers(result.offers);
+    } else {
+      offersListEl.innerHTML = '<p class="text-muted">No offers yet</p>';
+    }
+  } catch (error) {
+    console.error('[Auction] Failed to load offers:', error);
+    offersListEl.innerHTML = '<p class="text-muted">Error loading offers</p>';
   }
 }
 
+async function renderOffers(offers) {
+  const offersListEl = document.getElementById('offersList');
+  if (!offersListEl) return;
+
+  // Get all players to map Steam IDs to usernames
+  const playersResult = await ipcRenderer.invoke('get-all-players');
+  const playerMap = new Map();
+  if (playersResult.success && playersResult.players) {
+    playersResult.players.forEach(p => {
+      playerMap.set(p.steam_id, p.username);
+    });
+  }
+  
+  // Helper function to get username or fallback
+  const getPlayerName = (steamId) => {
+    return playerMap.get(steamId) || getSteamIdShort(steamId);
+  };
+
+  offersListEl.innerHTML = offers.map(offer => `
+    <div class="offer-card" style="background: rgba(0,0,0,0.3); padding: 15px; border-radius: 8px; margin-bottom: 10px;">
+      <div class="offer-header" style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+        <span><strong>${getPlayerName(offer.offering_player_steam_id)}</strong></span>
+        <span class="offer-gold" style="color: #FFD700; font-weight: bold;">💰 ${offer.gold_amount.toLocaleString()}</span>
+      </div>
+      <div class="offer-body" style="margin-bottom: 10px;">
+        Offering: <strong>${getPlayerName(offer.offered_player_steam_id)}</strong>
+      </div>
+      ${!offer.is_accepted ? `
+        <button class="btn-primary btn-sm btn-block" onclick="window.acceptOfferGlobal('${offer.id}')">
+          ✓ Accept Offer
+        </button>
+      ` : `
+        <div style="color: #4CAF50;">✓ Accepted</div>
+      `}
+    </div>
+  `).join('');
+}
+
+// Global function for accepting offers (called from onclick)
+window.acceptOfferGlobal = async function(offerId) {
+  if (!confirm('Accept this offer? This will transfer the player to the losing team.')) {
+    return;
+  }
+
+  try {
+    const result = await ipcRenderer.invoke('accept-offer', { offerId });
+    if (result.success) {
+      logActivity('Offer accepted!', 'success');
+      await refreshState();
+    } else {
+      alert('Failed to accept offer: ' + result.error);
+    }
+  } catch (error) {
+    alert('Error accepting offer: ' + error.message);
+  }
+};
+
 // Jitsi Window
 function openJitsiWindow() {
+  const { BrowserWindow } = require('electron').remote;
+  const path = require('path');
+
   const jitsiWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -960,3 +1148,9 @@ function formatGameState(state) {
   };
   return states[state] || state;
 }
+
+// Initialize on load
+window.addEventListener('DOMContentLoaded', () => {
+  initialize();
+  setTimeout(checkForResumableMatches, 2000);
+});
